@@ -61,8 +61,8 @@ export default function StockDashboard() {
     setLoading(true);
     setSymbol(targetSymbol);
     try {
-      // 優先使用雲端環境變數，本機則回退至 localhost:8000
-      const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      // 直接連線到 Render 永久雲端後端
+      const apiBase = "https://taiwan-stock-system.onrender.com";
       const res = await fetch(`${apiBase}/api/v1/stocks/${targetSymbol}/kline`);
       if (!res.ok) throw new Error("取得股票資料失敗");
       const data = await res.json();
