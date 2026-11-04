@@ -6,16 +6,15 @@ import requests
 
 app = FastAPI(title="Taiwan Stock Advanced Signal API")
 
+# 開放所有網域連線 (允許 Vercel 與手機 App 請求)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_credentials=True,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 def calculate_atr(df: pd.DataFrame, period=14):
-    """計算真實波動幅度 (ATR)"""
     high_low = df["high"] - df["low"]
     high_close = (df["high"] - df["close"].shift(1)).abs()
     low_close = (df["low"] - df["close"].shift(1)).abs()
@@ -23,7 +22,6 @@ def calculate_atr(df: pd.DataFrame, period=14):
     return tr.rolling(window=period).mean()
 
 def get_market_regime():
-    """大盤多空濾網：加權指數 (^TWII) 是否站上 20MA"""
     try:
         m_ticker = yf.Ticker("^TWII")
         m_hist = m_ticker.history(period="3mo")
@@ -51,7 +49,6 @@ def get_market_regime():
     }
 
 def get_institutional_data(symbol: str):
-    """籌碼面：向證交所公開 OpenAPI 索取當日三大法人買賣超 (張數)"""
     try:
         url = "https://openapi.twse.com.tw/v1/fund/T86"
         res = requests.get(url, timeout=2.0)
@@ -123,7 +120,6 @@ def get_stock_kline(symbol: str):
     processed_df = evaluate_signals(hist)
     processed_df = processed_df.fillna(0)
 
-    # 1. 個股技術面數據
     latest = processed_df.iloc[-1]
     current_price = round(float(latest["close"]), 2)
     ma5 = round(float(latest["ma5"]), 2)
@@ -132,19 +128,15 @@ def get_stock_kline(symbol: str):
     vol_ma20 = float(latest["vol_ma20"]) if float(latest["vol_ma20"]) > 0 else 1.0
     vol_ratio = round(vol / vol_ma20, 2)
     
-    # 14 日 ATR 真實波動值
     latest_atr = round(float(latest["atr"]), 2)
     if latest_atr <= 0:
         latest_atr = round(current_price * 0.02, 2)
 
-    # 2. 乖離率 (BIAS)
     bias = round(((current_price - ma20) / ma20) * 100, 2) if ma20 > 0 else 0.0
 
-    # 3. 取得大盤多空濾網與三大法人籌碼
     market = get_market_regime()
     inst = get_institutional_data(clean_symbol)
 
-    # 4. 綜合量化評分 (0 ~ 100 分)
     score = 50
     reasons = []
 
@@ -176,14 +168,12 @@ def get_stock_kline(symbol: str):
             score -= 15
             reasons.append(f"籌碼面：法人大幅調節 (外資 {inst['foreign']:+,} 張, 投信 {inst['trust']:+,} 張)")
 
-    # 大盤濾網評估（若大盤跌破月線，做多評分打 7 折）
     if not market["is_bull"]:
         score = int(score * 0.7)
         reasons.append("⚠️ 大盤濾網：加權指數跌破月線，全體多單勝率受壓制 (評分打 7 折)")
     else:
         reasons.append("🟢 大盤濾網：加權指數站上月線，大盤環境有利多方")
 
-    # 乖離率防追高檢查
     bias_limit = 2.5 if current_price < 50 else 5.0
     is_overheated = bias > bias_limit
 
@@ -193,7 +183,6 @@ def get_stock_kline(symbol: str):
     score = max(0, min(100, score))
     can_enter = score >= 75 and not is_overheated and market["is_bull"]
 
-    # 5. ATR 動態停損停利與進場價位計算 (1.5 倍 ATR 停損，3.0 倍 ATR 停利)
     if can_enter:
         action = "可進場"
         suggested_entry = round(max(ma5, current_price * 0.995), 2)
